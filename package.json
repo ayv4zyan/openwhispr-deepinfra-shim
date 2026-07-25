@@ -1,12 +1,13 @@
 {
   "name": "openwhispr-deepinfra-shim",
   "version": "1.0.0",
-  "description": "OpenWhispr middleware for DeepInfra Voxtral Small (WebM\u2192WAV STT bridge)",
+  "description": "OpenWhispr middleware for DeepInfra Voxtral Mini STT + Gemma cleanup",
   "type": "module",
   "private": true,
   "main": "deepinfra-voxtral-shim.js",
   "scripts": {
     "start": "node deepinfra-voxtral-shim.js",
+    "setup": "./setup-macos.sh",
     "install-macos": "./install-macos.sh",
     "uninstall-macos": "./uninstall-macos.sh",
     "apply-settings": "node apply-openwhispr-settings.mjs"
