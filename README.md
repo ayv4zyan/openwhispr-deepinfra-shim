@@ -26,9 +26,21 @@ You quit OpenWhispr
 | Stage | Model | Via |
 | --- | --- | --- |
 | Speech-to-text | `mistralai/Voxtral-Mini-3B-2507` | This shim → DeepInfra |
-| Dictation cleanup | `google/gemma-3-4b-it` | OpenWhispr custom LLM → DeepInfra |
+| Dictation cleanup | `google/gemma-3-4b-it` | OpenWhispr → **this shim** → DeepInfra |
 
-Configure cleanup once in OpenWhispr: **Settings → Language models** → enable cleanup, provider **Custom**, base URL `https://api.deepinfra.com/v1` (OpenWhispr appends paths; do **not** use `/v1/openai` or it becomes a double `/v1` 404), model `google/gemma-3-4b-it`, API key = DeepInfra token.
+Both STT and cleanup go through the local shim so your DeepInfra token stays in this project’s `.env` (OpenWhispr drops plaintext secrets from its own `.env` on save).
+
+**OpenWhispr cleanup settings (once):**
+
+| Field | Value |
+| --- | --- |
+| Enable cleanup | on |
+| Provider | Custom |
+| Base URL | `http://localhost:8765` |
+| Model | `google/gemma-3-4b-it` |
+| API key | any non-empty value (e.g. `local-shim`) — the shim uses project `.env` |
+
+OpenWhispr turns that base into `http://localhost:8765/v1/chat/completions`, which the shim proxies to DeepInfra.
 
 ## Lifecycle (no always-on daemon)
 

@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
- * OpenWhispr → DeepInfra Voxtral Small bridge.
+ * OpenWhispr → DeepInfra bridge (STT + cleanup LLM).
  *
- * OpenWhispr records WebM/Opus. DeepInfra Voxtral returns HTTP 500 on WebM.
- * This shim accepts OpenAI-compatible POST /audio/transcriptions, converts the
- * audio to WAV with ffmpeg, and forwards it to DeepInfra.
+ * STT:  OpenWhispr WebM → ffmpeg WAV → DeepInfra Voxtral Mini
+ * LLM:  OpenWhispr cleanup chat/completions → DeepInfra Gemma (etc.)
  *
  * Zero npm dependencies (Node 18+).
  */
@@ -27,10 +26,14 @@ import { randomBytes } from "node:crypto";
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.SHIM_PORT || 8765);
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
-const DEFAULT_MODEL =
+const DEFAULT_STT_MODEL =
   process.env.DEEPINFRA_MODEL || "mistralai/Voxtral-Mini-3B-2507";
-const UPSTREAM =
+const DEFAULT_CLEANUP_MODEL =
+  process.env.DEEPINFRA_CLEANUP_MODEL || "google/gemma-3-4b-it";
+const STT_UPSTREAM =
   "https://api.deepinfra.com/v1/openai/audio/transcriptions";
+const CHAT_UPSTREAM =
+  "https://api.deepinfra.com/v1/openai/chat/completions";
 
 function parseEnvFile(path) {
   const out = {};
@@ -85,15 +88,19 @@ function parseMultipartForm(body, contentType) {
     const idx = body.indexOf(delim, start);
     if (idx === -1) break;
     let partStart = idx + delim.length;
-    if (body[partStart] === 0x2d && body[partStart + 1] === 0x2d) break; // --
+    if (body[partStart] === 0x2d && body[partStart + 1] === 0x2d) break;
     if (body[partStart] === 0x0d && body[partStart + 1] === 0x0a) partStart += 2;
 
     const next = body.indexOf(delim, partStart);
-    let part = next === -1 ? body.subarray(partStart) : body.subarray(partStart, next);
+    let part =
+      next === -1 ? body.subarray(partStart) : body.subarray(partStart, next);
     start = next === -1 ? body.length : next;
 
-    // strip trailing CRLF before next boundary
-    if (part.length >= 2 && part[part.length - 2] === 0x0d && part[part.length - 1] === 0x0a) {
+    if (
+      part.length >= 2 &&
+      part[part.length - 2] === 0x0d &&
+      part[part.length - 1] === 0x0a
+    ) {
       part = part.subarray(0, part.length - 2);
     }
 
@@ -167,11 +174,11 @@ async function deepinfraTranscribe(wavPath, model, language, prompt) {
     new Blob([audio], { type: "audio/wav" }),
     "audio.wav"
   );
-  form.append("model", model || DEFAULT_MODEL);
+  form.append("model", model || DEFAULT_STT_MODEL);
   if (language) form.append("language", language);
   if (prompt) form.append("prompt", prompt);
 
-  const res = await fetch(UPSTREAM, {
+  const res = await fetch(STT_UPSTREAM, {
     method: "POST",
     headers: { Authorization: `Bearer ${TOKEN}` },
     body: form,
@@ -180,7 +187,7 @@ async function deepinfraTranscribe(wavPath, model, language, prompt) {
 
   const textBody = await res.text();
   if (!res.ok) {
-    throw new Error(`DeepInfra HTTP ${res.status}: ${textBody}`);
+    throw new Error(`DeepInfra STT HTTP ${res.status}: ${textBody}`);
   }
   const data = JSON.parse(textBody);
   return data.text || "";
@@ -196,6 +203,15 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
+function sendRaw(res, status, contentType, bodyBuf) {
+  res.writeHead(status, {
+    "Content-Type": contentType || "application/json",
+    "Content-Length": bodyBuf.length,
+    "Access-Control-Allow-Origin": "*",
+  });
+  res.end(bodyBuf);
+}
+
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -203,7 +219,9 @@ function readBody(req, limit) {
     req.on("data", (chunk) => {
       size += chunk.length;
       if (size > limit) {
-        reject(Object.assign(new Error("request body too large"), { status: 413 }));
+        reject(
+          Object.assign(new Error("request body too large"), { status: 413 })
+        );
         req.destroy();
         return;
       }
@@ -245,7 +263,7 @@ async function handleTranscribe(req, res) {
   }
 
   const { filename, data: fileBytes } = files.file;
-  let model = fields.model || DEFAULT_MODEL;
+  let model = fields.model || DEFAULT_STT_MODEL;
   let language = fields.language || null;
   const prompt = fields.prompt || null;
   if (language === "" || language === "auto") language = null;
@@ -285,6 +303,88 @@ async function handleTranscribe(req, res) {
   }
 }
 
+/**
+ * Proxy OpenAI-compatible chat completions to DeepInfra.
+ * OpenWhispr cleanup hits {base}/chat/completions after normalizing base to …/v1.
+ */
+async function handleChatCompletions(req, res) {
+  let bodyBuf;
+  try {
+    bodyBuf = await readBody(req, MAX_BODY_BYTES);
+  } catch (err) {
+    sendJson(res, err.status || 400, { error: err.message });
+    return;
+  }
+
+  let payload;
+  try {
+    payload = bodyBuf.length ? JSON.parse(bodyBuf.toString("utf8")) : {};
+  } catch {
+    sendJson(res, 400, { error: "invalid JSON body" });
+    return;
+  }
+
+  if (!payload.model || !String(payload.model).trim()) {
+    payload.model = DEFAULT_CLEANUP_MODEL;
+  }
+
+  // OpenWhispr may send max_completion_tokens; DeepInfra accepts max_tokens too.
+  if (payload.max_completion_tokens != null && payload.max_tokens == null) {
+    payload.max_tokens = payload.max_completion_tokens;
+  }
+
+  console.log(
+    `[shim] chat/completions model=${payload.model} messages=${payload.messages?.length ?? 0}`
+  );
+
+  try {
+    const upstream = await fetch(CHAT_UPSTREAM, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const text = await upstream.text();
+    const buf = Buffer.from(text, "utf8");
+    if (!upstream.ok) {
+      console.error(`[shim] DeepInfra chat HTTP ${upstream.status}: ${text.slice(0, 300)}`);
+    }
+    sendRaw(
+      res,
+      upstream.status,
+      upstream.headers.get("content-type") || "application/json",
+      buf
+    );
+  } catch (err) {
+    console.error("[shim] chat proxy error", err);
+    sendJson(res, 502, {
+      error: `cleanup proxy failed: ${err?.message || String(err)}`,
+    });
+  }
+}
+
+function handleModels(_req, res) {
+  // Minimal OpenAI-compatible catalog so pickers / probes don't 404.
+  sendJson(res, 200, {
+    object: "list",
+    data: [
+      {
+        id: DEFAULT_CLEANUP_MODEL,
+        object: "model",
+        owned_by: "deepinfra",
+      },
+      {
+        id: DEFAULT_STT_MODEL,
+        object: "model",
+        owned_by: "deepinfra",
+      },
+    ],
+  });
+}
+
 function ensureFfmpeg() {
   const result = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" });
   if (result.error?.code === "ENOENT" || result.status !== 0) {
@@ -303,7 +403,7 @@ function main() {
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Authorization, Content-Type",
       });
       res.end();
@@ -315,21 +415,49 @@ function main() {
       (path === "/audio/transcriptions" || path === "/v1/audio/transcriptions")
     ) {
       handleTranscribe(req, res).catch((err) => {
-        console.error("[shim] unhandled", err);
-        if (!res.headersSent) {
-          sendJson(res, 500, { error: "internal error" });
-        }
+        console.error("[shim] unhandled STT", err);
+        if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
       });
       return;
     }
 
-    sendJson(res, 404, { error: "not found" });
+    if (
+      req.method === "POST" &&
+      (path === "/chat/completions" || path === "/v1/chat/completions")
+    ) {
+      handleChatCompletions(req, res).catch((err) => {
+        console.error("[shim] unhandled chat", err);
+        if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
+      });
+      return;
+    }
+
+    if (
+      req.method === "GET" &&
+      (path === "/models" || path === "/v1/models")
+    ) {
+      handleModels(req, res);
+      return;
+    }
+
+    // Health for quick checks
+    if (req.method === "GET" && (path === "/" || path === "/health")) {
+      sendJson(res, 200, {
+        ok: true,
+        sttDefault: DEFAULT_STT_MODEL,
+        cleanupDefault: DEFAULT_CLEANUP_MODEL,
+      });
+      return;
+    }
+
+    sendJson(res, 404, { error: "not found", path });
   });
 
   server.listen(PORT, "127.0.0.1", () => {
-    console.log(`DeepInfra Voxtral shim on http://127.0.0.1:${PORT}`);
-    console.log(`Default model: ${DEFAULT_MODEL}`);
-    console.log(`Project root: ${ROOT}`);
+    console.log(`DeepInfra OpenWhispr shim on http://127.0.0.1:${PORT}`);
+    console.log(`  STT default:     ${DEFAULT_STT_MODEL}`);
+    console.log(`  Cleanup default: ${DEFAULT_CLEANUP_MODEL}`);
+    console.log(`  Project root:    ${ROOT}`);
   });
 }
 
