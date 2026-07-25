@@ -81,13 +81,24 @@ npm start
 # Full lifecycle from terminal
 ./openwhispr-with-shim.sh
 
-# Logs (written when started via wrapper)
-tail -f logs/shim.log
+# Logs
+tail -f logs/launcher.log   # wrapper (Finder launches write here)
+tail -f logs/shim.log       # Node STT server
 
 # Uninstall launcher + any leftover LaunchAgent
 ./uninstall-macos.sh      # macOS
 rm -f ~/.local/share/applications/openwhispr-deepinfra.desktop   # Linux
 ```
+
+### “Nothing happens” when opening the launcher (macOS)
+
+Finder apps get a minimal `PATH`, so Homebrew `node`/`ffmpeg` used to be invisible and the script exited with no window. The wrapper now:
+
+- prepends `/opt/homebrew/bin` and `/usr/local/bin`
+- shows a **macOS alert** on hard failures
+- logs to `logs/launcher.log`
+
+Re-run `./install-macos.sh` after updating, then open **OpenWhispr + DeepInfra** again.
 
 ## Security
 

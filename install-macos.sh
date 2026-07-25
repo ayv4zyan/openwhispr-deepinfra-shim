@@ -66,8 +66,10 @@ cat > "$LAUNCHER_APP/Contents/Info.plist" <<PLIST
 PLIST
 
 # LSUIElement=true: no extra Dock icon; OpenWhispr is what you see.
+# GUI apps get a tiny PATH — export Homebrew locations before exec.
 cat > "$LAUNCHER_APP/Contents/MacOS/launcher" <<EOF
 #!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 exec "$ROOT/openwhispr-with-shim.sh"
 EOF
 chmod 755 "$LAUNCHER_APP/Contents/MacOS/launcher"
