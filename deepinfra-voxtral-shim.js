@@ -28,7 +28,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.SHIM_PORT || 8765);
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MODEL =
-  process.env.DEEPINFRA_MODEL || "mistralai/Voxtral-Small-24B-2507";
+  process.env.DEEPINFRA_MODEL || "mistralai/Voxtral-Mini-3B-2507";
 const UPSTREAM =
   "https://api.deepinfra.com/v1/openai/audio/transcriptions";
 

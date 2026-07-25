@@ -1,6 +1,6 @@
 # OpenWhispr → DeepInfra Voxtral shim
 
-Local middleware that lets [OpenWhispr](https://openwhispr.com) use **DeepInfra’s `mistralai/Voxtral-Small-24B-2507`** for speech-to-text.
+Local middleware that lets [OpenWhispr](https://openwhispr.com) use **DeepInfra’s `mistralai/Voxtral-Mini-3B-2507`** for speech-to-text.
 
 ## Why this exists
 
@@ -20,6 +20,15 @@ You open "OpenWhispr + DeepInfra"
 You quit OpenWhispr
    → shim stops
 ```
+
+## Recommended stack
+
+| Stage | Model | Via |
+| --- | --- | --- |
+| Speech-to-text | `mistralai/Voxtral-Mini-3B-2507` | This shim → DeepInfra |
+| Dictation cleanup | `google/gemma-3-4b-it` | OpenWhispr custom LLM → DeepInfra |
+
+Configure cleanup once in OpenWhispr: **Settings → Language models** → enable cleanup, provider **Custom**, base URL `https://api.deepinfra.com/v1/openai`, model `google/gemma-3-4b-it`, API key = DeepInfra token.
 
 ## Lifecycle (no always-on daemon)
 
@@ -69,7 +78,7 @@ cp .env.example .env
 | Field | Value |
 | --- | --- |
 | Server / base URL | `http://localhost:8765` |
-| Model | `mistralai/Voxtral-Small-24B-2507` |
+| Model | `mistralai/Voxtral-Mini-3B-2507` |
 | API key | optional (token is in this project’s `.env`) |
 
 ## Manual / debug
