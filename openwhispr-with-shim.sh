@@ -165,6 +165,18 @@ trap cleanup EXIT INT TERM
 
 log "=== launch begin (PATH=$PATH) ==="
 require_files
+
+# If OpenWhispr is already open without a shim (stock app, or shim was killed),
+# start the shim and wait for quit instead of launching a second instance.
+if openwhispr_running; then
+  log "OpenWhispr already running — ensuring shim is up and waiting for quit..."
+  start_shim
+  while openwhispr_running; do sleep 1; done
+  log "OpenWhispr closed."
+  exit 0
+fi
+
 start_shim
+log "Launching OpenWhispr (shim stays up until it quits)..."
 launch_openwhispr
 log "OpenWhispr closed."

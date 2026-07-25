@@ -120,6 +120,24 @@ OpenWhispr always stores UI settings under its own userData. The repo keeps a **
 
 ---
 
+
+### Transcription error / connection refused
+
+OpenWhispr is configured for `http://localhost:8765`. If the **shim is not running**, STT fails.
+
+Common causes:
+
+1. Opened **stock** OpenWhispr instead of **OpenWhispr + DeepInfra**
+2. Something killed the shim while OpenWhispr stayed open (e.g. an old install script freeing port 8765)
+
+**Fix while OpenWhispr is already open:**
+
+```bash
+./start-shim.sh
+```
+
+Then dictate again. Or quit OpenWhispr and reopen via **OpenWhispr + DeepInfra**.
+
 ## Debug
 
 ```bash

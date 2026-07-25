@@ -19,16 +19,21 @@ fi
 launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/$LABEL.plist"
 
-# Stop any orphan shim still bound to the port
+# Stop orphan shim on :8765 only when OpenWhispr is NOT running.
+# Killing the shim while OpenWhispr is open causes "transcription error".
 if command -v lsof >/dev/null 2>&1; then
   pids="$(lsof -nP -iTCP:8765 -sTCP:LISTEN -t 2>/dev/null || true)"
   if [[ -n "${pids:-}" ]]; then
-    echo "Stopping leftover process(es) on :8765: $pids"
-    # shellcheck disable=SC2086
-    kill $pids 2>/dev/null || true
-    sleep 0.3
-    # shellcheck disable=SC2086
-    kill -9 $pids 2>/dev/null || true
+    if pgrep -x OpenWhispr >/dev/null 2>&1; then
+      echo "Leaving shim on :8765 running (OpenWhispr is open)."
+    else
+      echo "Stopping leftover process(es) on :8765: $pids"
+      # shellcheck disable=SC2086
+      kill $pids 2>/dev/null || true
+      sleep 0.3
+      # shellcheck disable=SC2086
+      kill -9 $pids 2>/dev/null || true
+    fi
   fi
 fi
 
