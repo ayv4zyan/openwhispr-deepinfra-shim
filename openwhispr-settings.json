@@ -1,0 +1,28 @@
+{
+  "_comment": "Recommended OpenWhispr localStorage values for this stack. Apply with: ./apply-openwhispr-settings.sh (OpenWhispr must be quit).",
+  "speechToText": {
+    "transcriptionMode": "providers",
+    "useLocalWhisper": "false",
+    "cloudTranscriptionMode": "byok",
+    "cloudTranscriptionProvider": "custom",
+    "cloudTranscriptionBaseUrl": "http://localhost:8765",
+    "cloudTranscriptionModel": "mistralai/Voxtral-Mini-3B-2507"
+  },
+  "cleanup": {
+    "useCleanupModel": "true",
+    "cleanupMode": "providers",
+    "cleanupProvider": "custom",
+    "cleanupCloudMode": "byok",
+    "cleanupCloudBaseUrl": "http://localhost:8765",
+    "cleanupModel": "google/gemma-3-4b-it",
+    "cleanupDisableThinking": "true",
+    "openAiEndpointPreference": {
+      "http://localhost:8765": "chat",
+      "http://localhost:8765/v1": "chat"
+    }
+  },
+  "openWhisprEnvHints": {
+    "CUSTOM_CLEANUP_API_KEY": "local-shim",
+    "CUSTOM_TRANSCRIPTION_API_KEY": "(optional; STT auth is handled by the shim .env)"
+  }
+}
