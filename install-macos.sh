@@ -6,10 +6,15 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 LABEL="com.openwhispr.deepinfra-voxtral-shim"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST="$PLIST_DIR/$LABEL.plist"
-PYTHON3="$(command -v python3)"
+NODE="$(command -v node)"
 FFMPEG_DIR="$(dirname "$(command -v ffmpeg)")"
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR" "$PLIST_DIR"
+
+if [[ -z "$NODE" ]]; then
+  echo "node not found on PATH (need Node.js 18+)"
+  exit 1
+fi
 
 if [[ ! -f "$ROOT/.env" ]]; then
   echo "Missing $ROOT/.env — copy .env.example and set DEEPINFRA_TOKEN"
@@ -25,8 +30,8 @@ cat > "$PLIST" <<PLIST
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$PYTHON3</string>
-    <string>$ROOT/deepinfra-voxtral-shim.py</string>
+    <string>$NODE</string>
+    <string>$ROOT/deepinfra-voxtral-shim.js</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -51,7 +56,8 @@ UID_NUM="$(id -u)"
 launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_NUM" "$PLIST"
 echo "Installed and started: $LABEL"
-echo "  Script: $ROOT/deepinfra-voxtral-shim.py"
+echo "  Script: $ROOT/deepinfra-voxtral-shim.js"
+echo "  Node:   $NODE"
 echo "  Logs:   $LOG_DIR/shim.log"
 echo "  Port:   127.0.0.1:8765"
 echo

@@ -19,8 +19,8 @@ You speak → OpenWhispr (WebM) → localhost:8765 (this shim) → DeepInfra Vox
 
 ## Requirements
 
-- macOS (LaunchAgent install script is macOS-only; the Python server works anywhere)
-- Python 3.9+
+- macOS (LaunchAgent install script is macOS-only; the Node server works anywhere)
+- **Node.js 18+** (uses built-in `fetch` / `FormData` — no npm install)
 - `ffmpeg` on `PATH` (`brew install ffmpeg`)
 - DeepInfra API token: https://deepinfra.com/dash/api_keys
 
@@ -49,7 +49,8 @@ You do **not** point OpenWhispr at this folder path. OpenWhispr only needs the *
 ## Run without LaunchAgent
 
 ```bash
-python3 deepinfra-voxtral-shim.py
+npm start
+# or: node deepinfra-voxtral-shim.js
 ```
 
 ## Ops
