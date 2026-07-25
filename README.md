@@ -14,27 +14,55 @@ This shim:
 4. Returns `{"text": "..."}`
 
 ```
-You speak → OpenWhispr (WebM) → localhost:8765 (this shim) → DeepInfra Voxtral → text
+You open "OpenWhispr + DeepInfra"
+   → shim starts on localhost:8765
+   → OpenWhispr opens
+You quit OpenWhispr
+   → shim stops
 ```
+
+## Lifecycle (no always-on daemon)
+
+The shim does **not** run at login. It only runs while OpenWhispr is open, via a wrapper:
+
+| Platform | Install | What you open day-to-day |
+| --- | --- | --- |
+| **macOS** | `./install-macos.sh` | `~/Applications/OpenWhispr + DeepInfra.app` |
+| **Linux** | `./install-linux.sh` | App menu entry *OpenWhispr + DeepInfra* |
+| **Either** | — | `./openwhispr-with-shim.sh` from a terminal |
+
+Stock OpenWhispr (Dock / `/Applications`) does **not** start the shim. Use the launcher above (put it in the Dock instead of stock OpenWhispr).
+
+### Why not LaunchAgent / systemd “always on”?
+
+Easy to forget and leave a process running forever. Lifecycle binding is better: when you stop using OpenWhispr, nothing is left behind.
+
+### Apple Shortcuts?
+
+Possible (automations “When OpenWhispr opens/closes”), but fragile (permissions, “Run without asking”, and Shortcuts can miss close events). The wrapper script is the reliable cross-platform approach.
 
 ## Requirements
 
-- macOS (LaunchAgent install script is macOS-only; the Node server works anywhere)
-- **Node.js 18+** (uses built-in `fetch` / `FormData` — no npm install)
-- `ffmpeg` on `PATH` (`brew install ffmpeg`)
+- **Node.js 18+** (zero npm dependencies)
+- `ffmpeg` on `PATH` (`brew install ffmpeg` / distro package)
 - DeepInfra API token: https://deepinfra.com/dash/api_keys
+- OpenWhispr installed
 
 ## Setup
 
 ```bash
 cd ~/Sync/Projects/openwhispr-deepinfra-shim   # or your clone path
 cp .env.example .env
-# edit .env and set DEEPINFRA_TOKEN=...
+# edit .env → DEEPINFRA_TOKEN=...
 
+# macOS
 ./install-macos.sh
+
+# Linux
+./install-linux.sh
 ```
 
-### OpenWhispr settings
+### OpenWhispr settings (once)
 
 **Settings → Speech-to-text → Custom endpoint / Self-hosted:**
 
@@ -42,39 +70,30 @@ cp .env.example .env
 | --- | --- |
 | Server / base URL | `http://localhost:8765` |
 | Model | `mistralai/Voxtral-Small-24B-2507` |
-| API key | optional (token lives in this project’s `.env`) |
+| API key | optional (token is in this project’s `.env`) |
 
-You do **not** point OpenWhispr at this folder path. OpenWhispr only needs the **HTTP URL** of the running shim.
-
-## Run without LaunchAgent
+## Manual / debug
 
 ```bash
+# Run shim alone (stays up until Ctrl+C)
 npm start
-# or: node deepinfra-voxtral-shim.js
-```
 
-## Ops
+# Full lifecycle from terminal
+./openwhispr-with-shim.sh
 
-```bash
-# Status
-lsof -nP -iTCP:8765 -sTCP:LISTEN
-launchctl print "gui/$(id -u)/com.openwhispr.deepinfra-voxtral-shim" | head
-
-# Logs
+# Logs (written when started via wrapper)
 tail -f logs/shim.log
 
-# Reinstall after moving the repo
-./install-macos.sh
-
-# Stop / uninstall
-./uninstall-macos.sh
+# Uninstall launcher + any leftover LaunchAgent
+./uninstall-macos.sh      # macOS
+rm -f ~/.local/share/applications/openwhispr-deepinfra.desktop   # Linux
 ```
 
 ## Security
 
-- Listens on `127.0.0.1` only (not exposed to the network)
+- Listens on `127.0.0.1` only
 - `.env` is gitignored — never commit tokens
-- Token is read from, in order: `DEEPINFRA_TOKEN` env, project `.env`, then legacy `~/.openwhispr/deepinfra.env`
+- Token from: `DEEPINFRA_TOKEN` env → project `.env` → legacy `~/.openwhispr/deepinfra.env`
 
 ## License
 
