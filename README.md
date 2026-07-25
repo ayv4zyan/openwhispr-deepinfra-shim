@@ -28,7 +28,7 @@ You quit OpenWhispr
 | Speech-to-text | `mistralai/Voxtral-Mini-3B-2507` | This shim → DeepInfra |
 | Dictation cleanup | `google/gemma-3-4b-it` | OpenWhispr custom LLM → DeepInfra |
 
-Configure cleanup once in OpenWhispr: **Settings → Language models** → enable cleanup, provider **Custom**, base URL `https://api.deepinfra.com/v1/openai`, model `google/gemma-3-4b-it`, API key = DeepInfra token.
+Configure cleanup once in OpenWhispr: **Settings → Language models** → enable cleanup, provider **Custom**, base URL `https://api.deepinfra.com/v1` (OpenWhispr appends paths; do **not** use `/v1/openai` or it becomes a double `/v1` 404), model `google/gemma-3-4b-it`, API key = DeepInfra token.
 
 ## Lifecycle (no always-on daemon)
 
