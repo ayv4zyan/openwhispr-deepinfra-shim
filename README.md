@@ -1,36 +1,73 @@
-# OpenWhispr → DeepInfra Voxtral shim
+# OpenWhispr → DeepInfra shim
 
-Local middleware that lets [OpenWhispr](https://openwhispr.com) use **DeepInfra’s `mistralai/Voxtral-Mini-3B-2507`** for speech-to-text.
+Local middleware so [OpenWhispr](https://openwhispr.com) can use DeepInfra for:
 
-## Why this exists
-
-OpenWhispr always uploads **WebM** audio. DeepInfra Voxtral returns HTTP 500 (`inference error`) on WebM. WAV/MP3 work.
-
-This shim:
-
-1. Speaks OpenAI’s `POST /audio/transcriptions` (what OpenWhispr expects)
-2. Converts the recording to WAV with `ffmpeg`
-3. Forwards to DeepInfra with your API token
-4. Returns `{"text": "..."}`
-
-```
-You open "OpenWhispr + DeepInfra"
-   → shim starts on localhost:8765
-   → OpenWhispr opens
-You quit OpenWhispr
-   → shim stops
-```
-
-## Recommended stack
-
-| Stage | Model | Via |
+| Stage | Model | Path |
 | --- | --- | --- |
-| Speech-to-text | `mistralai/Voxtral-Mini-3B-2507` | This shim → DeepInfra |
+| Speech-to-text | `mistralai/Voxtral-Mini-3B-2507` | OpenWhispr → **this shim** → DeepInfra |
 | Dictation cleanup | `google/gemma-3-4b-it` | OpenWhispr → **this shim** → DeepInfra |
 
-Both STT and cleanup go through the local shim so your DeepInfra token stays in this project’s `.env` (OpenWhispr drops plaintext secrets from its own `.env` on save).
+OpenWhispr records **WebM**; DeepInfra Voxtral returns HTTP 500 on WebM. The shim converts to WAV and holds your API token so OpenWhispr does not need to store it long-term.
 
-**OpenWhispr cleanup settings (once):**
+```
+Open "OpenWhispr + DeepInfra"
+  → shim starts on 127.0.0.1:8765
+  → OpenWhispr opens
+Quit OpenWhispr
+  → shim stops
+```
+
+---
+
+## New Mac setup (clone → working)
+
+**You still need three things that are not (and cannot be) inside git:**
+
+1. **OpenWhispr** installed (`/Applications/OpenWhispr.app`)
+2. **Node.js 18+** and **ffmpeg** (`brew install node ffmpeg`)
+3. A **DeepInfra API token** (https://deepinfra.com/dash/api_keys) — put in `.env`, never commit
+
+Everything else is in this repo.
+
+```bash
+git clone https://github.com/ayv4zyan/openwhispr-deepinfra-shim.git
+cd openwhispr-deepinfra-shim
+
+# 1) Token (first run creates .env and exits if token missing)
+cp .env.example .env
+# edit .env → DEEPINFRA_TOKEN=...
+
+# 2) One command: launcher + OpenWhispr settings (when possible)
+./setup-macos.sh
+```
+
+If OpenWhispr was **never** launched on that Mac, `setup-macos.sh` installs the launcher then tells you to:
+
+1. Open stock OpenWhispr once (create userData / localStorage)
+2. Quit OpenWhispr
+3. Run `./apply-openwhispr-settings.sh`
+4. Day-to-day: open **OpenWhispr + DeepInfra** (not stock OpenWhispr)
+
+### What `setup-macos.sh` does
+
+| Step | Action |
+| --- | --- |
+| Checks | `node`, `ffmpeg`, OpenWhispr.app, `.env` token |
+| `./install-macos.sh` | Builds `~/Applications/OpenWhispr + DeepInfra.app` |
+| `./apply-openwhispr-settings.sh` | Writes STT + cleanup into OpenWhispr localStorage from `openwhispr-settings.json` |
+
+### Manual OpenWhispr UI (if apply script fails)
+
+**Speech-to-text**
+
+| Field | Value |
+| --- | --- |
+| Mode | Custom / self-hosted / BYOK |
+| Base URL | `http://localhost:8765` |
+| Model | `mistralai/Voxtral-Mini-3B-2507` |
+| API key | optional |
+
+**Cleanup (Language models)**
 
 | Field | Value |
 | --- | --- |
@@ -38,129 +75,73 @@ Both STT and cleanup go through the local shim so your DeepInfra token stays in 
 | Provider | Custom |
 | Base URL | `http://localhost:8765` |
 | Model | `google/gemma-3-4b-it` |
-| API key | any non-empty value (e.g. `local-shim`) — the shim uses project `.env` |
+| API key | `local-shim` (any non-empty; real token is project `.env`) |
 
-OpenWhispr turns that base into `http://localhost:8765/v1/chat/completions`, which the shim proxies to DeepInfra.
+---
 
-## Lifecycle (no always-on daemon)
-
-The shim does **not** run at login. It only runs while OpenWhispr is open, via a wrapper:
-
-| Platform | Install | What you open day-to-day |
-| --- | --- | --- |
-| **macOS** | `./install-macos.sh` | `~/Applications/OpenWhispr + DeepInfra.app` |
-| **Linux** | `./install-linux.sh` | App menu entry *OpenWhispr + DeepInfra* |
-| **Either** | — | `./openwhispr-with-shim.sh` from a terminal |
-
-Stock OpenWhispr (Dock / `/Applications`) does **not** start the shim. Use the launcher above (put it in the Dock instead of stock OpenWhispr).
-
-### Why not LaunchAgent / systemd “always on”?
-
-Easy to forget and leave a process running forever. Lifecycle binding is better: when you stop using OpenWhispr, nothing is left behind.
-
-### Apple Shortcuts?
-
-Possible (automations “When OpenWhispr opens/closes”), but fragile (permissions, “Run without asking”, and Shortcuts can miss close events). The wrapper script is the reliable cross-platform approach.
-
-## Requirements
-
-- **Node.js 18+** (zero npm dependencies)
-- `ffmpeg` on `PATH` (`brew install ffmpeg` / distro package)
-- DeepInfra API token: https://deepinfra.com/dash/api_keys
-- OpenWhispr installed
-
-## Setup
+## Linux
 
 ```bash
-cd ~/Sync/Projects/openwhispr-deepinfra-shim   # or your clone path
-cp .env.example .env
-# edit .env → DEEPINFRA_TOKEN=...
-
-# macOS
-./install-macos.sh
-
-# Linux
+cp .env.example .env   # set DEEPINFRA_TOKEN
 ./install-linux.sh
+# Launch OpenWhispr once, quit, then:
+./apply-openwhispr-settings.sh
 ```
 
-### OpenWhispr settings (once)
+Open **OpenWhispr + DeepInfra** from the app menu (or `./openwhispr-with-shim.sh`).
 
-**Settings → Speech-to-text → Custom endpoint / Self-hosted:**
+---
 
-| Field | Value |
+## Project layout
+
+| Path | Purpose |
 | --- | --- |
-| Server / base URL | `http://localhost:8765` |
-| Model | `mistralai/Voxtral-Mini-3B-2507` |
-| API key | optional (token is in this project’s `.env`) |
+| `deepinfra-voxtral-shim.js` | STT + chat/completions proxy |
+| `openwhispr-with-shim.sh` | Start shim → OpenWhispr → stop shim |
+| `setup-macos.sh` | **New machine** one-shot |
+| `install-macos.sh` / `install-linux.sh` | Launcher only |
+| `apply-openwhispr-settings.sh` | Write OpenWhispr settings from JSON |
+| `openwhispr-settings.json` | Settings recipe (in git) |
+| `.env.example` | Token template (in git) |
+| `.env` | Your token (**not** in git) |
 
-## Manual / debug
-
-```bash
-# Run shim alone (stays up until Ctrl+C)
-npm start
-
-# Full lifecycle from terminal
-./openwhispr-with-shim.sh
-
-# Logs
-tail -f logs/launcher.log   # wrapper (Finder launches write here)
-tail -f logs/shim.log       # Node STT server
-
-# Uninstall launcher + any leftover LaunchAgent
-./uninstall-macos.sh      # macOS
-rm -f ~/.local/share/applications/openwhispr-deepinfra.desktop   # Linux
-```
-
-### “Nothing happens” when opening the launcher (macOS)
-
-Finder apps get a minimal `PATH`, so Homebrew `node`/`ffmpeg` used to be invisible and the script exited with no window. The wrapper now:
-
-- prepends `/opt/homebrew/bin` and `/usr/local/bin`
-- shows a **macOS alert** on hard failures
-- logs to `logs/launcher.log`
-
-Re-run `./install-macos.sh` after updating, then open **OpenWhispr + DeepInfra** again.
-
-## Security
-
-- Listens on `127.0.0.1` only
-- `.env` is gitignored — never commit tokens
-- Token from: `DEEPINFRA_TOKEN` env → project `.env` → legacy `~/.openwhispr/deepinfra.env`
-
+---
 
 ## What lives where
 
 | Location | What | In git? |
 | --- | --- | --- |
-| **This project** | Shim, launcher scripts, settings JSON, docs | yes (except `.env` / `logs/`) |
-| **This project `.env`** | `DEEPINFRA_TOKEN` (real secret) | **no** (gitignored) |
-| **`~/Applications/OpenWhispr + DeepInfra.app`** | macOS Dock launcher → runs `openwhispr-with-shim.sh` | no (generated by `./install-macos.sh`) |
-| **OpenWhispr app data** (`~/Library/Application Support/open-whispr/` on macOS) | UI settings (localStorage), notes DB, OpenWhispr’s own `.env` | no — **owned by OpenWhispr** |
-| **`~/.openwhispr/cli-bridge.json`** | OpenWhispr CLI bridge port/token | no — **owned by OpenWhispr** |
+| **This project** | Code, installers, settings JSON | yes |
+| **This project `.env`** | `DEEPINFRA_TOKEN` | **no** |
+| **`~/Applications/OpenWhispr + DeepInfra.app`** | Generated launcher | no |
+| **OpenWhispr userData** | App settings, notes, DB | no (app-owned) |
 
-OpenWhispr’s settings **cannot** live inside this repo as live data: the app always reads Chromium localStorage under its userData path. What we *can* keep in the project is a **recipe** (`openwhispr-settings.json`) and an applier:
+OpenWhispr always stores UI settings under its own userData. The repo keeps a **recipe** (`openwhispr-settings.json`) and applies it; it cannot ship your live OpenWhispr database.
+
+---
+
+## Debug
 
 ```bash
-# Quit OpenWhispr first
-./apply-openwhispr-settings.sh
+npm start                          # shim only
+./openwhispr-with-shim.sh          # full lifecycle in terminal
+tail -f logs/launcher.log
+tail -f logs/shim.log
+curl -s http://127.0.0.1:8765/health
+./uninstall-macos.sh               # remove launcher + old LaunchAgent
 ```
 
-That writes STT + cleanup settings into OpenWhispr’s localStorage and ensures `CUSTOM_CLEANUP_API_KEY=local-shim` in OpenWhispr’s `.env` (the real DeepInfra token stays only in **this** project’s `.env`).
+### “Nothing happens” when opening the launcher
 
-### Do not move
+Finder apps get a tiny `PATH`. The wrapper prepends Homebrew paths and logs to `logs/launcher.log`. Re-run `./install-macos.sh` after moving the clone.
 
-- OpenWhispr notes / transcription DB / secure-keys
-- Stock `/Applications/OpenWhispr.app`
-- Anything under `~/Library/Application Support/open-whispr/` except optional re-apply of settings via the script above
+---
 
-### Optional cleanup of legacy files
+## Security
 
-Older experiments may have left:
-
-- `~/.openwhispr/deepinfra.env` — duplicate token; safe to delete if project `.env` has `DEEPINFRA_TOKEN`
-- `~/.openwhispr/shim.log` — obsolete
-- LaunchAgent `com.openwhispr.deepinfra-voxtral-shim` — removed by `./install-macos.sh` / `./uninstall-macos.sh`
-
+- Shim binds `127.0.0.1` only
+- Never commit `.env`
+- Token load order: `DEEPINFRA_TOKEN` env → project `.env`
 
 ## License
 
