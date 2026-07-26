@@ -2,7 +2,7 @@
 /**
  * OpenWhispr → DeepInfra bridge (STT + cleanup LLM).
  *
- * STT:  OpenWhispr WebM → ffmpeg WAV → DeepInfra Voxtral Mini
+ * STT:  OpenWhispr WebM → ffmpeg WAV → lead/trail silence trim → DeepInfra Voxtral
  * LLM:  OpenWhispr cleanup chat/completions → DeepInfra Gemma (etc.)
  *
  * Zero npm dependencies (Node 18+).
@@ -13,10 +13,12 @@ import { spawn, spawnSync } from "node:child_process";
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   unlinkSync,
   existsSync,
   mkdtempSync,
   rmSync,
+  mkdirSync,
 } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join, dirname, extname } from "node:path";
@@ -24,16 +26,13 @@ import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.SHIM_PORT || 8765);
-const MAX_BODY_BYTES = 25 * 1024 * 1024;
-const DEFAULT_STT_MODEL =
-  process.env.DEEPINFRA_MODEL || "mistralai/Voxtral-Mini-3B-2507";
-const DEFAULT_CLEANUP_MODEL =
-  process.env.DEEPINFRA_CLEANUP_MODEL || "google/gemma-3-4b-it";
 const STT_UPSTREAM =
   "https://api.deepinfra.com/v1/openai/audio/transcriptions";
 const CHAT_UPSTREAM =
   "https://api.deepinfra.com/v1/openai/chat/completions";
+const LOGS_DIR = join(ROOT, "logs");
+const BENCH_LOG = join(LOGS_DIR, "cleanup-bench.jsonl");
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
 function parseEnvFile(path) {
   const out = {};
@@ -55,25 +54,113 @@ function parseEnvFile(path) {
   return out;
 }
 
-function loadToken() {
-  const fromEnv = (process.env.DEEPINFRA_TOKEN || "").trim();
-  if (fromEnv) return fromEnv;
-
+function loadDotEnv() {
   for (const path of [
     join(ROOT, ".env"),
     join(homedir(), ".openwhispr", "deepinfra.env"),
   ]) {
-    const token = (parseEnvFile(path).DEEPINFRA_TOKEN || "").trim();
-    if (token) return token;
+    const parsed = parseEnvFile(path);
+    for (const [key, value] of Object.entries(parsed)) {
+      if (process.env[key] === undefined || process.env[key] === "") {
+        process.env[key] = value;
+      }
+    }
   }
+}
 
+function envOn(name, defaultWhenUnset = false) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return defaultWhenUnset;
+  return /^(1|true|yes|on)$/i.test(String(raw).trim());
+}
+
+/** Default on; set 0/false/no/off to disable. */
+function envEnabled(name, defaultWhenUnset = true) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return defaultWhenUnset;
+  return !/^(0|false|no|off)$/i.test(String(raw).trim());
+}
+
+function loadPromptFile(filename, fallback) {
+  const path = join(ROOT, filename);
+  if (existsSync(path)) {
+    return readFileSync(path, "utf8").trim();
+  }
+  return fallback;
+}
+
+function loadShortCleanupPrompt() {
+  return loadPromptFile(
+    "cleanup-prompt-short.txt",
+    "You clean one dictation transcript for a document. The speaker is not talking to you. " +
+      "Input is between <transcript> tags. Output only the cleaned text. " +
+      "Remove fillers and false starts; light punctuation; keep wording; do not answer questions."
+  );
+}
+
+function loadMinimalCleanupPrompt() {
+  return loadPromptFile(
+    "cleanup-prompt-minimal.txt",
+    "Clean the dictation inside <transcript>. Speaker is not talking to you. " +
+      "Output only the cleaned text. Remove fillers and false starts. Light punctuation."
+  );
+}
+
+// Load .env before reading config so CLEANUP_BENCH=1 in project .env works.
+loadDotEnv();
+
+const PORT = Number(process.env.SHIM_PORT || 8765);
+const DEFAULT_STT_MODEL =
+  process.env.DEEPINFRA_MODEL || "mistralai/Voxtral-Mini-3B-2507";
+const DEFAULT_CLEANUP_MODEL =
+  process.env.DEEPINFRA_CLEANUP_MODEL || "google/gemma-4-E4B-it";
+
+// Lead/trail silence only (never compress mid-utterance pauses).
+const TRIM_EDGE_SILENCE = envEnabled("TRIM_EDGE_SILENCE", true);
+const TRIM_PAD_SEC = Math.min(
+  1,
+  Math.max(0.05, Number(process.env.TRIM_SILENCE_PAD_SEC) || 0.25)
+);
+// dB under full scale. More negative = less aggressive (default -50).
+// Peak -40 was too hot and could wipe quiet speech.
+const TRIM_THRESHOLD_DB = Number(process.env.TRIM_SILENCE_DB) || -50;
+
+// Production cleanup system prompt: short | minimal | stock (OpenWhispr as-sent).
+// Default short — best quality/speed tradeoff on Gemma 4 E4B for this stack.
+const CLEANUP_PROMPT_MODE = (() => {
+  const m = String(process.env.CLEANUP_PROMPT_MODE ?? "short")
+    .trim()
+    .toLowerCase();
+  if (m === "stock" || m === "openwhispr" || m === "passthrough") return "stock";
+  if (m === "minimal" || m === "min") return "minimal";
+  return "short";
+})();
+
+// Cleanup A/B (kept for later): stock vs short on every cleanup — ~2× API cost.
+// CLEANUP_BENCH=1 to enable. CLEANUP_BENCH_RETURN=stock|short picks what OpenWhispr pastes.
+const CLEANUP_BENCH = envOn("CLEANUP_BENCH", false);
+const CLEANUP_BENCH_RETURN = /^(short)$/i.test(
+  String(process.env.CLEANUP_BENCH_RETURN ?? "stock").trim()
+)
+  ? "short"
+  : "stock";
+const SHORT_CLEANUP_PROMPT = loadShortCleanupPrompt();
+const MINIMAL_CLEANUP_PROMPT = loadMinimalCleanupPrompt();
+
+function activeCleanupSystemPrompt() {
+  if (CLEANUP_PROMPT_MODE === "minimal") return MINIMAL_CLEANUP_PROMPT;
+  if (CLEANUP_PROMPT_MODE === "short") return SHORT_CLEANUP_PROMPT;
+  return null; // stock: leave OpenWhispr messages unchanged
+}
+
+const TOKEN = (() => {
+  const fromEnv = (process.env.DEEPINFRA_TOKEN || "").trim();
+  if (fromEnv) return fromEnv;
   console.error(
     "DEEPINFRA_TOKEN not set. Copy .env.example to .env and add your token."
   );
   process.exit(1);
-}
-
-const TOKEN = loadToken();
+})();
 
 function parseMultipartForm(body, contentType) {
   const m = /boundary="?([^";]+)"?/i.exec(contentType || "");
@@ -129,23 +216,14 @@ function parseMultipartForm(body, contentType) {
   return { fields, files };
 }
 
-function convertToWav(inputPath) {
+function tmpWavPath(prefix = "ow-voxtral") {
+  return join(tmpdir(), `${prefix}-${randomBytes(8).toString("hex")}.wav`);
+}
+
+function runFfmpeg(args, failMessage) {
   return new Promise((resolve, reject) => {
-    const outPath = join(
-      tmpdir(),
-      `ow-voxtral-${randomBytes(8).toString("hex")}.wav`
-    );
-    const child = spawn(
-      "ffmpeg",
-      ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-f", "wav", outPath],
-      { stdio: "ignore" }
-    );
+    const child = spawn("ffmpeg", args, { stdio: "ignore" });
     child.on("error", (err) => {
-      try {
-        unlinkSync(outPath);
-      } catch {
-        /* ignore */
-      }
       if (err.code === "ENOENT") {
         reject(new Error("ffmpeg not found on PATH"));
       } else {
@@ -153,17 +231,142 @@ function convertToWav(inputPath) {
       }
     });
     child.on("close", (code) => {
-      if (code === 0) resolve(outPath);
-      else {
-        try {
-          unlinkSync(outPath);
-        } catch {
-          /* ignore */
-        }
-        reject(new Error("ffmpeg failed to transcode audio"));
-      }
+      if (code === 0) resolve();
+      else reject(new Error(failMessage || `ffmpeg exited ${code}`));
     });
   });
+}
+
+function wavDurationSec(wavPath) {
+  const result = spawnSync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      wavPath,
+    ],
+    { encoding: "utf8" }
+  );
+  if (result.status !== 0) return null;
+  const n = Number(String(result.stdout || "").trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+function convertToWav(inputPath) {
+  const outPath = tmpWavPath("ow-voxtral");
+  return runFfmpeg(
+    ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-f", "wav", outPath],
+    "ffmpeg failed to transcode audio"
+  )
+    .then(() => outPath)
+    .catch((err) => {
+      try {
+        unlinkSync(outPath);
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    });
+}
+
+/**
+ * Trim leading + trailing silence only. Interior pauses are left intact.
+ *
+ * Uses areverse so we only ever run start_periods=1 (ffmpeg stop_periods +
+ * aggressive peak thresholds were wiping quiet speech → empty STT).
+ * On failure / over-trim, returns the original path unchanged.
+ */
+async function trimEdgeSilence(wavPath) {
+  if (!TRIM_EDGE_SILENCE) return wavPath;
+
+  const before = wavDurationSec(wavPath);
+  const outPath = tmpWavPath("ow-trim");
+  // Min continuous silence before we start cutting (avoids chopping soft speech).
+  const minSilence = 0.15;
+  // Lead: remove opening silence, keep pad. Reverse, same for trail, reverse back.
+  const lead =
+    `silenceremove=` +
+    `start_periods=1:` +
+    `start_duration=${minSilence}:` +
+    `start_silence=${TRIM_PAD_SEC}:` +
+    `start_threshold=${TRIM_THRESHOLD_DB}dB:` +
+    `detection=rms`;
+  const filter = `${lead},areverse,${lead},areverse`;
+
+  try {
+    await runFfmpeg(
+      [
+        "-y",
+        "-i",
+        wavPath,
+        "-af",
+        filter,
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-f",
+        "wav",
+        outPath,
+      ],
+      "ffmpeg failed to trim silence"
+    );
+  } catch (err) {
+    try {
+      unlinkSync(outPath);
+    } catch {
+      /* ignore */
+    }
+    console.warn(
+      `[shim] edge silence trim failed, using untrimmed audio: ${err?.message || err}`
+    );
+    return wavPath;
+  }
+
+  const after = wavDurationSec(outPath);
+  const outBytes = existsSync(outPath) ? readFileSync(outPath).length : 0;
+
+  const reject = (why) => {
+    try {
+      unlinkSync(outPath);
+    } catch {
+      /* ignore */
+    }
+    console.log(
+      `[shim] edge silence trim rejected (${why}); ` +
+        `before=${before?.toFixed(2) ?? "?"}s after=${after?.toFixed(2) ?? "?"}s — using original`
+    );
+    return wavPath;
+  };
+
+  // WAV header alone ~44 bytes; need real audio left.
+  if (outBytes < 3200 || after == null || after < 0.35) {
+    return reject("too short after trim");
+  }
+  // Guard: if we removed most of the clip, the threshold ate speech — keep original.
+  if (before != null && before > 1.0 && after / before < 0.45) {
+    return reject(`over-trim kept ${((after / before) * 100).toFixed(0)}%`);
+  }
+
+  if (before != null && after != null) {
+    const saved = before - after;
+    if (saved > 0.05) {
+      console.log(
+        `[shim] edge silence trim ${before.toFixed(2)}s → ${after.toFixed(2)}s (−${saved.toFixed(2)}s)`
+      );
+    }
+  }
+
+  try {
+    unlinkSync(wavPath);
+  } catch {
+    /* ignore */
+  }
+  return outPath;
 }
 
 async function deepinfraTranscribe(wavPath, model, language, prompt) {
@@ -275,8 +478,18 @@ async function handleTranscribe(req, res) {
 
   try {
     writeFileSync(inPath, fileBytes);
+    const tPipe = performance.now();
     wavPath = await convertToWav(inPath);
+    const tWav = performance.now();
+    wavPath = await trimEdgeSilence(wavPath);
+    const tTrim = performance.now();
     const text = await deepinfraTranscribe(wavPath, model, language, prompt);
+    const tStt = performance.now();
+    console.log(
+      `[shim] STT wav=${Math.round(tWav - tPipe)}ms trim=${Math.round(tTrim - tWav)}ms ` +
+        `deepinfra=${Math.round(tStt - tTrim)}ms total=${Math.round(tStt - tPipe)}ms ` +
+        `chars=${(text || "").length}`
+    );
     sendJson(res, 200, { text, object: "transcription" });
   } catch (err) {
     const msg = err?.message || String(err);
@@ -303,9 +516,108 @@ async function handleTranscribe(req, res) {
   }
 }
 
+function normalizeChatPayload(payload) {
+  if (!payload.model || !String(payload.model).trim()) {
+    payload.model = DEFAULT_CLEANUP_MODEL;
+  }
+  // OpenWhispr may send max_completion_tokens; DeepInfra accepts max_tokens too.
+  if (payload.max_completion_tokens != null && payload.max_tokens == null) {
+    payload.max_tokens = payload.max_completion_tokens;
+  }
+  return payload;
+}
+
+function estimateChars(messages) {
+  if (!Array.isArray(messages)) return 0;
+  let n = 0;
+  for (const m of messages) {
+    const c = m?.content;
+    if (typeof c === "string") n += c.length;
+    else if (Array.isArray(c)) {
+      for (const part of c) {
+        if (typeof part?.text === "string") n += part.text.length;
+      }
+    }
+  }
+  return n;
+}
+
+function withSystemPrompt(messages, systemText) {
+  const list = Array.isArray(messages) ? messages.map((m) => ({ ...m })) : [];
+  const sysIdx = list.findIndex((m) => m.role === "system");
+  if (sysIdx >= 0) {
+    list[sysIdx] = { ...list[sysIdx], content: systemText };
+  } else {
+    list.unshift({ role: "system", content: systemText });
+  }
+  return list;
+}
+
+function parseChatResult(status, textBody) {
+  let data = null;
+  try {
+    data = textBody ? JSON.parse(textBody) : null;
+  } catch {
+    /* ignore */
+  }
+  const choice = data?.choices?.[0];
+  const content =
+    choice?.message?.content ??
+    choice?.text ??
+    (typeof choice?.message === "string" ? choice.message : "");
+  const usage = data?.usage || {};
+  const cached =
+    usage.prompt_tokens_details?.cached_tokens ??
+    usage.prompt_tokens_details?.cachedTokens ??
+    null;
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    content: typeof content === "string" ? content : String(content || ""),
+    promptTokens: usage.prompt_tokens ?? null,
+    completionTokens: usage.completion_tokens ?? null,
+    totalTokens: usage.total_tokens ?? null,
+    cachedTokens: cached,
+    raw: textBody,
+  };
+}
+
+async function deepinfraChat(payload) {
+  const t0 = performance.now();
+  const upstream = await fetch(CHAT_UPSTREAM, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(120_000),
+  });
+  const text = await upstream.text();
+  const ms = Math.round(performance.now() - t0);
+  const parsed = parseChatResult(upstream.status, text);
+  return {
+    ...parsed,
+    ms,
+    contentType: upstream.headers.get("content-type") || "application/json",
+  };
+}
+
+function appendBenchLog(row) {
+  try {
+    mkdirSync(LOGS_DIR, { recursive: true });
+    appendFileSync(BENCH_LOG, JSON.stringify(row) + "\n", "utf8");
+  } catch (err) {
+    console.warn(`[shim] bench log write failed: ${err?.message || err}`);
+  }
+}
+
 /**
  * Proxy OpenAI-compatible chat completions to DeepInfra.
  * OpenWhispr cleanup hits {base}/chat/completions after normalizing base to …/v1.
+ *
+ * CLEANUP_BENCH=1 → run stock system prompt and short prompt back-to-back on the
+ * same request, log timings, return CLEANUP_BENCH_RETURN (stock|short).
  */
 async function handleChatCompletions(req, res) {
   let bodyBuf;
@@ -324,39 +636,127 @@ async function handleChatCompletions(req, res) {
     return;
   }
 
-  if (!payload.model || !String(payload.model).trim()) {
-    payload.model = DEFAULT_CLEANUP_MODEL;
-  }
+  normalizeChatPayload(payload);
 
-  // OpenWhispr may send max_completion_tokens; DeepInfra accepts max_tokens too.
-  if (payload.max_completion_tokens != null && payload.max_tokens == null) {
-    payload.max_tokens = payload.max_completion_tokens;
-  }
-
+  const msgCount = payload.messages?.length ?? 0;
   console.log(
-    `[shim] chat/completions model=${payload.model} messages=${payload.messages?.length ?? 0}`
+    `[shim] chat/completions model=${payload.model} messages=${msgCount}` +
+      ` prompt=${CLEANUP_PROMPT_MODE}` +
+      (CLEANUP_BENCH ? ` bench=on return=${CLEANUP_BENCH_RETURN}` : "")
   );
 
   try {
-    const upstream = await fetch(CHAT_UPSTREAM, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${TOKEN}`,
-        "Content-Type": "application/json",
+    if (!CLEANUP_BENCH) {
+      const sys = activeCleanupSystemPrompt();
+      const outPayload = sys
+        ? {
+            ...payload,
+            messages: withSystemPrompt(payload.messages, sys),
+          }
+        : payload;
+      const result = await deepinfraChat(outPayload);
+      if (!result.ok) {
+        console.error(
+          `[shim] DeepInfra chat HTTP ${result.status}: ${result.raw.slice(0, 300)}`
+        );
+      } else {
+        console.log(
+          `[shim] cleanup ${result.ms}ms tokens=${result.promptTokens ?? "?"}/${result.completionTokens ?? "?"}` +
+            (result.cachedTokens != null ? ` cached=${result.cachedTokens}` : "") +
+            ` mode=${CLEANUP_PROMPT_MODE}`
+        );
+      }
+      sendRaw(res, result.status, result.contentType, Buffer.from(result.raw, "utf8"));
+      return;
+    }
+
+    // --- A/B bench path ---
+    const stockPayload = {
+      ...payload,
+      messages: Array.isArray(payload.messages)
+        ? payload.messages.map((m) => ({ ...m }))
+        : payload.messages,
+    };
+    const shortPayload = {
+      ...payload,
+      messages: withSystemPrompt(payload.messages, SHORT_CLEANUP_PROMPT),
+    };
+
+    // Sequential (short first, then stock) so order bias can be compared across runs.
+    // Second call may look slower due to queue / no concurrent GPU fight.
+    const short = await deepinfraChat(shortPayload);
+    const stock = await deepinfraChat(stockPayload);
+
+    const stockSysChars = estimateChars(
+      (stockPayload.messages || []).filter((m) => m.role === "system")
+    );
+    const shortSysChars = estimateChars(
+      (shortPayload.messages || []).filter((m) => m.role === "system")
+    );
+
+    const row = {
+      ts: new Date().toISOString(),
+      model: payload.model,
+      returnVariant: CLEANUP_BENCH_RETURN,
+      stock: {
+        ms: stock.ms,
+        ok: stock.ok,
+        status: stock.status,
+        promptTokens: stock.promptTokens,
+        completionTokens: stock.completionTokens,
+        cachedTokens: stock.cachedTokens,
+        systemChars: stockSysChars,
+        outChars: stock.content.length,
+        outPreview: stock.content.slice(0, 160),
       },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(120_000),
-    });
-    const text = await upstream.text();
-    const buf = Buffer.from(text, "utf8");
-    if (!upstream.ok) {
-      console.error(`[shim] DeepInfra chat HTTP ${upstream.status}: ${text.slice(0, 300)}`);
+      short: {
+        ms: short.ms,
+        ok: short.ok,
+        status: short.status,
+        promptTokens: short.promptTokens,
+        completionTokens: short.completionTokens,
+        cachedTokens: short.cachedTokens,
+        systemChars: shortSysChars,
+        outChars: short.content.length,
+        outPreview: short.content.slice(0, 160),
+      },
+      deltaMs: stock.ms != null && short.ms != null ? short.ms - stock.ms : null,
+    };
+    appendBenchLog(row);
+
+    const faster =
+      stock.ok && short.ok
+        ? short.ms < stock.ms
+          ? "short"
+          : stock.ms < short.ms
+            ? "stock"
+            : "tie"
+        : "n/a";
+
+    console.log(
+      `[shim] CLEANUP BENCH stock=${stock.ms}ms (prompt_tok=${stock.promptTokens ?? "?"}) ` +
+        `short=${short.ms}ms (prompt_tok=${short.promptTokens ?? "?"}) ` +
+        `faster=${faster} return=${CLEANUP_BENCH_RETURN}`
+    );
+    console.log(
+      `[shim]   stock out: ${JSON.stringify(stock.content.slice(0, 120))}`
+    );
+    console.log(
+      `[shim]   short out: ${JSON.stringify(short.content.slice(0, 120))}`
+    );
+    console.log(`[shim]   logged → ${BENCH_LOG}`);
+
+    const chosen = CLEANUP_BENCH_RETURN === "short" ? short : stock;
+    if (!chosen.ok) {
+      console.error(
+        `[shim] DeepInfra chat HTTP ${chosen.status}: ${chosen.raw.slice(0, 300)}`
+      );
     }
     sendRaw(
       res,
-      upstream.status,
-      upstream.headers.get("content-type") || "application/json",
-      buf
+      chosen.status,
+      chosen.contentType,
+      Buffer.from(chosen.raw, "utf8")
     );
   } catch (err) {
     console.error("[shim] chat proxy error", err);
@@ -446,6 +846,11 @@ function main() {
         ok: true,
         sttDefault: DEFAULT_STT_MODEL,
         cleanupDefault: DEFAULT_CLEANUP_MODEL,
+        cleanupPromptMode: CLEANUP_PROMPT_MODE,
+        cleanupBench: CLEANUP_BENCH,
+        cleanupBenchReturn: CLEANUP_BENCH_RETURN,
+        edgeSilenceTrim: TRIM_EDGE_SILENCE,
+        benchLog: CLEANUP_BENCH ? BENCH_LOG : null,
       });
       return;
     }
@@ -457,6 +862,13 @@ function main() {
     console.log(`DeepInfra OpenWhispr shim on http://127.0.0.1:${PORT}`);
     console.log(`  STT default:     ${DEFAULT_STT_MODEL}`);
     console.log(`  Cleanup default: ${DEFAULT_CLEANUP_MODEL}`);
+    console.log(
+      `  Edge silence:    ${TRIM_EDGE_SILENCE ? `on (pad ${TRIM_PAD_SEC}s, ${TRIM_THRESHOLD_DB}dB)` : "off"}`
+    );
+    console.log(`  Cleanup prompt:  ${CLEANUP_PROMPT_MODE}`);
+    console.log(
+      `  Cleanup bench:   ${CLEANUP_BENCH ? `ON → return ${CLEANUP_BENCH_RETURN}; log ${BENCH_LOG}` : "off (set CLEANUP_BENCH=1 to re-enable)"}`
+    );
     console.log(`  Project root:    ${ROOT}`);
   });
 }

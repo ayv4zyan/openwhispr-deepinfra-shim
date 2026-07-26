@@ -104,7 +104,7 @@ echo "  Open \"OpenWhispr + DeepInfra\" (not stock OpenWhispr in /Applications)"
 echo
 echo "Stack:"
 echo "  STT:     mistralai/Voxtral-Mini-3B-2507  via localhost:8765"
-echo "  Cleanup: google/gemma-3-4b-it            via localhost:8765"
+echo "  Cleanup: google/gemma-4-E4B-it            via localhost:8765"
 echo "  Token:   $ROOT/.env"
 echo
 echo "Logs: $ROOT/logs/"

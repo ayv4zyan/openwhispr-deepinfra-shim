@@ -14,7 +14,7 @@
     "cleanupProvider": "custom",
     "cleanupCloudMode": "byok",
     "cleanupCloudBaseUrl": "http://localhost:8765",
-    "cleanupModel": "google/gemma-3-4b-it",
+    "cleanupModel": "google/gemma-4-E4B-it",
     "cleanupDisableThinking": "true",
     "openAiEndpointPreference": {
       "http://localhost:8765": "chat",

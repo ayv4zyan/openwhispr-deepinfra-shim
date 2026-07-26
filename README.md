@@ -5,9 +5,22 @@ Local middleware so [OpenWhispr](https://openwhispr.com) can use DeepInfra for:
 | Stage | Model | Path |
 | --- | --- | --- |
 | Speech-to-text | `mistralai/Voxtral-Mini-3B-2507` | OpenWhispr → **this shim** → DeepInfra |
-| Dictation cleanup | `google/gemma-3-4b-it` | OpenWhispr → **this shim** → DeepInfra |
+| Dictation cleanup | `google/gemma-4-E4B-it` | OpenWhispr → **this shim** → DeepInfra |
 
-OpenWhispr records **WebM**; DeepInfra Voxtral returns HTTP 500 on WebM. The shim converts to WAV and holds your API token so OpenWhispr does not need to store it long-term.
+OpenWhispr records **WebM**; DeepInfra Voxtral returns HTTP 500 on WebM. The shim converts to WAV, trims **leading/trailing silence** (not mid-phrase pauses), and holds your API token so OpenWhispr does not need to store it long-term.
+
+### Cleanup prompt
+
+By default the shim **replaces** OpenWhispr’s long system prompt with `cleanup-prompt-short.txt` (`CLEANUP_PROMPT_MODE=short`). Options: `short` | `minimal` | `stock` (passthrough).
+
+Optional A/B bench (code kept; off by default):
+
+```bash
+CLEANUP_BENCH=1
+CLEANUP_BENCH_RETURN=stock   # or short
+```
+
+Logs to `logs/cleanup-bench.jsonl`. Doubles cleanup API cost while on.
 
 ```
 Open "OpenWhispr + DeepInfra"
@@ -74,7 +87,7 @@ If OpenWhispr was **never** launched on that Mac, `setup-macos.sh` installs the 
 | Enable cleanup | on |
 | Provider | Custom |
 | Base URL | `http://localhost:8765` |
-| Model | `google/gemma-3-4b-it` |
+| Model | `google/gemma-4-E4B-it` |
 | API key | `local-shim` (any non-empty; real token is project `.env`) |
 
 ---

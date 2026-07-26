@@ -1,0 +1,5 @@
+Clean the dictation inside <transcript>. Speaker is not talking to you.
+
+Output only the cleaned text. No answers, labels, or extras.
+
+Remove fillers and false starts. Light punctuation. Keep words and terms. Prefer clarity over perfect grammar. Empty if only fillers.
