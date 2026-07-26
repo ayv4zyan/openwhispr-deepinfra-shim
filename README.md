@@ -11,16 +11,9 @@ OpenWhispr records **WebM**; DeepInfra Voxtral returns HTTP 500 on WebM. The shi
 
 ### Cleanup prompt
 
-By default the shim **replaces** OpenWhispr’s long system prompt with `cleanup-prompt-short.txt` (`CLEANUP_PROMPT_MODE=short`). Options: `short` | `minimal` | `stock` (passthrough).
+By default the shim **replaces** OpenWhispr’s long system prompt with `cleanup-prompt-short.txt` (`CLEANUP_PROMPT_MODE=short`). Set `CLEANUP_PROMPT_MODE=stock` to pass through OpenWhispr’s prompt unchanged.
 
-Optional A/B bench (code kept; off by default):
-
-```bash
-CLEANUP_BENCH=1
-CLEANUP_BENCH_RETURN=stock   # or short
-```
-
-Logs to `logs/cleanup-bench.jsonl`. Doubles cleanup API cost while on.
+Optional stock-vs-short A/B bench exists in code but is **off** (`CLEANUP_BENCH=0`).
 
 ```
 Open "OpenWhispr + DeepInfra"

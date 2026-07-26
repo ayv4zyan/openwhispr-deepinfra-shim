@@ -98,15 +98,7 @@ function loadShortCleanupPrompt() {
   );
 }
 
-function loadMinimalCleanupPrompt() {
-  return loadPromptFile(
-    "cleanup-prompt-minimal.txt",
-    "Clean the dictation inside <transcript>. Speaker is not talking to you. " +
-      "Output only the cleaned text. Remove fillers and false starts. Light punctuation."
-  );
-}
-
-// Load .env before reading config so CLEANUP_BENCH=1 in project .env works.
+// Load .env before reading config so CLEANUP_BENCH / CLEANUP_PROMPT_MODE work.
 loadDotEnv();
 
 const PORT = Number(process.env.SHIM_PORT || 8765);
@@ -125,19 +117,17 @@ const TRIM_PAD_SEC = Math.min(
 // Peak -40 was too hot and could wipe quiet speech.
 const TRIM_THRESHOLD_DB = Number(process.env.TRIM_SILENCE_DB) || -50;
 
-// Production cleanup system prompt: short | minimal | stock (OpenWhispr as-sent).
-// Default short — best quality/speed tradeoff on Gemma 4 E4B for this stack.
+// Production cleanup system prompt: short (default) | stock (OpenWhispr as-sent).
 const CLEANUP_PROMPT_MODE = (() => {
   const m = String(process.env.CLEANUP_PROMPT_MODE ?? "short")
     .trim()
     .toLowerCase();
   if (m === "stock" || m === "openwhispr" || m === "passthrough") return "stock";
-  if (m === "minimal" || m === "min") return "minimal";
   return "short";
 })();
 
-// Cleanup A/B (kept for later): stock vs short on every cleanup — ~2× API cost.
-// CLEANUP_BENCH=1 to enable. CLEANUP_BENCH_RETURN=stock|short picks what OpenWhispr pastes.
+// Cleanup A/B (off): stock vs short on every cleanup — ~2× API cost when enabled.
+// CLEANUP_BENCH=1 to re-enable. CLEANUP_BENCH_RETURN=stock|short picks what OpenWhispr pastes.
 const CLEANUP_BENCH = envOn("CLEANUP_BENCH", false);
 const CLEANUP_BENCH_RETURN = /^(short)$/i.test(
   String(process.env.CLEANUP_BENCH_RETURN ?? "stock").trim()
@@ -145,10 +135,8 @@ const CLEANUP_BENCH_RETURN = /^(short)$/i.test(
   ? "short"
   : "stock";
 const SHORT_CLEANUP_PROMPT = loadShortCleanupPrompt();
-const MINIMAL_CLEANUP_PROMPT = loadMinimalCleanupPrompt();
 
 function activeCleanupSystemPrompt() {
-  if (CLEANUP_PROMPT_MODE === "minimal") return MINIMAL_CLEANUP_PROMPT;
   if (CLEANUP_PROMPT_MODE === "short") return SHORT_CLEANUP_PROMPT;
   return null; // stock: leave OpenWhispr messages unchanged
 }
