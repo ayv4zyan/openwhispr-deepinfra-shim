@@ -119,6 +119,16 @@ Day-to-day you only edit **this project `.env`**.
 
 Day-to-day: open **OpenWhispr + DeepInfra** from the app menu (or `./openwhispr-with-shim.sh`). Do **not** use stock OpenWhispr — that skips the shim (`localhost:8765` connection refused).
 
+### Start at login (Linux)
+
+OpenWhispr’s own “start on login” writes `~/.config/autostart/open-whispr.desktop` and launches **stock** OpenWhispr (no shim, no Caps Lock). Turn that toggle **off** (or let the script remove the file) and use ours:
+
+```bash
+./install-linux-autostart.sh
+```
+
+That deletes the stock login item and installs `~/.config/autostart/openwhispr-deepinfra.desktop` → `openwhispr-with-shim.sh --hidden` (tray, same as OpenWhispr’s own flag). Leave the in-app toggle off; turning it on recreates the stock file and you get two launches.
+
 If OpenWhispr is already open without the shim: `./start-shim.sh`.
 
 ### Wayland auto-paste (ydotool)
@@ -179,6 +189,7 @@ The Caps Lock LED / case-lock may still toggle while the session is open. OpenWh
 | `setup-macos.sh` | **New machine** one-shot |
 | `install-macos.sh` / `install-linux.sh` | Launcher only |
 | `install-linux-ydotool.sh` | Wayland paste: ydotool + `input` group + user service |
+| `install-linux-autostart.sh` | Session login → OpenWhispr + DeepInfra (not stock) |
 | `install-linux-capslock.sh` | KDE helper only (Caps Lock stays free until launch) |
 | `scripts/kde-caps-dictate.sh` | Bind/release Caps Lock with the OpenWhispr session |
 | `scripts/toggle-openwhispr-dictation.sh` | Invokes OpenWhispr’s KDE `dictation` action |
@@ -197,6 +208,7 @@ The Caps Lock LED / case-lock may still toggle while the session is open. OpenWh
 | **This project `.env`** | `DEEPINFRA_TOKEN` | **no** |
 | **`~/Applications/OpenWhispr + DeepInfra.app`** | Generated macOS launcher | no |
 | **`~/.local/share/applications/openwhispr-deepinfra.desktop`** | Linux launcher | no (from `install-linux.sh`) |
+| **`~/.config/autostart/openwhispr-deepinfra.desktop`** | Login start | no (from `install-linux-autostart.sh`) |
 | **`~/.local/share/applications/openwhispr-caps-dictate.desktop`** | Caps Lock binding | no (from `install-linux-capslock.sh`) |
 | **OpenWhispr userData** (`~/.config/open-whispr`) | App settings, notes, DB | no (app-owned) |
 

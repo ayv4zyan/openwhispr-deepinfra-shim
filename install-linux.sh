@@ -40,3 +40,4 @@ echo
 echo "Optional (this machine):"
 echo "  ./install-linux-ydotool.sh     # Wayland auto-paste"
 echo "  ./install-linux-capslock.sh    # Caps Lock → dictate (KDE)"
+echo "  ./install-linux-autostart.sh   # login start (replaces stock OpenWhispr)"

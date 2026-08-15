@@ -205,7 +205,11 @@ launch_openwhispr() {
     fi
     log "Opening OpenWhispr (waiting until it quits)..."
     # -W waits until the app quits. If already open, waits for that session.
-    open -W -a OpenWhispr
+    if (($#)); then
+      open -W -a OpenWhispr --args "$@"
+    else
+      open -W -a OpenWhispr
+    fi
     return
   fi
 
@@ -220,8 +224,8 @@ launch_openwhispr() {
   if [[ -z "$bin" ]]; then
     die "OpenWhispr binary not found on PATH (tried openwhispr, OpenWhispr, open-whispr)"
   fi
-  log "Starting $bin ..."
-  "$bin" &
+  log "Starting $bin $* ..."
+  "$bin" "$@" &
   local app_pid=$!
   wait "$app_pid" || true
 }
@@ -250,5 +254,5 @@ fi
 start_shim
 enable_caps_dictate
 log "Launching OpenWhispr (shim + Caps Lock stay up until it quits)..."
-launch_openwhispr
+launch_openwhispr "$@"
 log "OpenWhispr closed."
