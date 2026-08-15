@@ -129,6 +129,22 @@ OpenWhispr’s own “start on login” writes `~/.config/autostart/open-whispr.
 
 That deletes the stock login item and installs `~/.config/autostart/openwhispr-deepinfra.desktop` → `openwhispr-with-shim.sh --hidden` (tray, same as OpenWhispr’s own flag). Leave the in-app toggle off; turning it on recreates the stock file and you get two launches.
 
+### Linux GPU (UI)
+
+The packaged app was starting **without a GPU process**, so Chromium used software compositing (`--disable-gpu-compositing`) and the window felt laggy. This is separate from AUR `openwhispr-vulkan` (that package only accelerates **local** Whisper, not the UI, and you use DeepInfra for STT).
+
+Flags live in `~/.config/open-whispr-flags.conf` (read by `/opt/openwhispr/open-whispr`):
+
+```
+--ignore-gpu-blocklist
+--disable-gpu-sandbox
+--enable-gpu-rasterization
+--enable-zero-copy
+--enable-features=CanvasOopRasterization
+```
+
+After a restart you should see a `--type=gpu-process` using `libvulkan_radeon.so`. Chromium may still pass `--disable-gpu-compositing` to renderers on XWayland; raster/GPU still run on the RX 570.
+
 If OpenWhispr is already open without the shim: `./start-shim.sh`.
 
 ### Wayland auto-paste (ydotool)

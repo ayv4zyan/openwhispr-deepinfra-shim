@@ -97,12 +97,11 @@ port_in_use() {
 }
 
 openwhispr_running() {
-  # macOS app process name
+  # Exact process names only. Do not pgrep -f the install path — that matches
+  # unrelated shells whose command text merely mentions the binary.
   pgrep -x OpenWhispr >/dev/null 2>&1 && return 0
-  # Linux package / Electron binary names
   pgrep -x open-whispr >/dev/null 2>&1 && return 0
-  pgrep -x openwhispr >/dev/null 2>&1 && return 0
-  pgrep -f '/opt/openwhispr/open-whispr' >/dev/null 2>&1 && return 0
+  pgrep -x open-whispr-app >/dev/null 2>&1 && return 0
   return 1
 }
 
