@@ -85,16 +85,80 @@ If OpenWhispr was **never** launched on that Mac, `setup-macos.sh` installs the 
 
 ---
 
-## Linux
+## Linux (Arch / KDE Plasma 6 — this machine)
+
+Replay path after a reinstall or a new clone. Three things are **not** in git:
+
+1. **OpenWhispr** (`openwhispr` on PATH, typically `/opt/openwhispr` from `openwhispr-bin`)
+2. **Node.js 18+** and **ffmpeg** (nvm Node is fine; launcher prepends `~/.local/share/nvm/v*/bin`)
+3. **DeepInfra token** — https://deepinfra.com/dash/api_keys
+
+### Token
 
 ```bash
-cp .env.example .env   # set DEEPINFRA_TOKEN
+cp .env.example .env
+chmod 600 .env
+# edit .env → DEEPINFRA_TOKEN=...
+```
+
+| File | What |
+| --- | --- |
+| **This project `.env`** | `DEEPINFRA_TOKEN` — the real key. Never commit. |
+| `~/.openwhispr/deepinfra.env` | Optional second place the shim also reads. |
+| `~/.config/open-whispr/.env` | OpenWhispr’s own file. Apply script writes `CUSTOM_CLEANUP_API_KEY=local-shim` only. |
+
+Day-to-day you only edit **this project `.env`**.
+
+### Shim + OpenWhispr settings
+
+```bash
 ./install-linux.sh
-# Launch OpenWhispr once, quit, then:
+# First time only: launch stock OpenWhispr once, quit fully, then:
 ./apply-openwhispr-settings.sh
 ```
 
-Open **OpenWhispr + DeepInfra** from the app menu (or `./openwhispr-with-shim.sh`).
+Day-to-day: open **OpenWhispr + DeepInfra** from the app menu (or `./openwhispr-with-shim.sh`). Do **not** use stock OpenWhispr — that skips the shim (`localhost:8765` connection refused).
+
+If OpenWhispr is already open without the shim: `./start-shim.sh`.
+
+### Wayland auto-paste (ydotool)
+
+OpenWhispr on Wayland pastes via **ydotool**. Until this is done it shows “Wayland Paste Setup”.
+
+```bash
+./install-linux-ydotool.sh   # pacman ydotool, input group, udev, user service
+```
+
+Then **log out and back in** so `groups` includes `input` (the app checks that, not `/etc/group`). Restart OpenWhispr + DeepInfra.
+
+Manual equivalent (Arch):
+
+```bash
+sudo pacman -S --needed ydotool
+sudo usermod -aG input "$USER"
+# package already ships /usr/lib/udev/rules.d/80-uinput.rules
+systemctl --user enable --now ydotool.service
+```
+
+### Caps Lock = start/stop dictation (KDE only)
+
+OpenWhispr’s KDE backend **cannot** register `CapsLock` (no Qt key in `kdeShortcut.js`). The binding is a Plasma shortcut that invokes OpenWhispr’s existing `dictation` action.
+
+```bash
+./install-linux-capslock.sh
+```
+
+That writes:
+
+| Path | Role |
+| --- | --- |
+| `scripts/toggle-openwhispr-dictation.sh` | `qdbus6` → `/component/openwhispr` `invokeShortcut dictation` |
+| `~/.local/share/applications/openwhispr-caps-dictate.desktop` | Hidden app, `X-KDE-Shortcuts=Caps Lock` |
+| `~/.config/kglobalshortcutsrc` `[services][openwhispr-caps-dictate.desktop]` | `_launch=Caps Lock,…` |
+
+Tap **Caps Lock** to start dictation, tap again to stop. OpenWhispr must be running. The Caps Lock LED / case-lock may still toggle — that is the OS lock, not the shortcut.
+
+OpenWhispr **Settings** may still show `Ctrl+Super` (or similar). Leave it. Caps Lock is the extra KDE binding; if you set Caps Lock inside the app, KDE registration fails and it falls back to F8.
 
 ---
 
@@ -106,6 +170,9 @@ Open **OpenWhispr + DeepInfra** from the app menu (or `./openwhispr-with-shim.sh
 | `openwhispr-with-shim.sh` | Start shim → OpenWhispr → stop shim |
 | `setup-macos.sh` | **New machine** one-shot |
 | `install-macos.sh` / `install-linux.sh` | Launcher only |
+| `install-linux-ydotool.sh` | Wayland paste: ydotool + `input` group + user service |
+| `install-linux-capslock.sh` | KDE: Caps Lock → dictate |
+| `scripts/toggle-openwhispr-dictation.sh` | Invokes OpenWhispr’s KDE `dictation` action |
 | `apply-openwhispr-settings.sh` | Write OpenWhispr settings from JSON |
 | `openwhispr-settings.json` | Settings recipe (in git) |
 | `.env.example` | Token template (in git) |
@@ -119,8 +186,10 @@ Open **OpenWhispr + DeepInfra** from the app menu (or `./openwhispr-with-shim.sh
 | --- | --- | --- |
 | **This project** | Code, installers, settings JSON | yes |
 | **This project `.env`** | `DEEPINFRA_TOKEN` | **no** |
-| **`~/Applications/OpenWhispr + DeepInfra.app`** | Generated launcher | no |
-| **OpenWhispr userData** | App settings, notes, DB | no (app-owned) |
+| **`~/Applications/OpenWhispr + DeepInfra.app`** | Generated macOS launcher | no |
+| **`~/.local/share/applications/openwhispr-deepinfra.desktop`** | Linux launcher | no (from `install-linux.sh`) |
+| **`~/.local/share/applications/openwhispr-caps-dictate.desktop`** | Caps Lock binding | no (from `install-linux-capslock.sh`) |
+| **OpenWhispr userData** (`~/.config/open-whispr`) | App settings, notes, DB | no (app-owned) |
 
 OpenWhispr always stores UI settings under its own userData. The repo keeps a **recipe** (`openwhispr-settings.json`) and applies it; it cannot ship your live OpenWhispr database.
 

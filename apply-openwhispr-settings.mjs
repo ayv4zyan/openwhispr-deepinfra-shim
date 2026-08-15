@@ -27,7 +27,13 @@ function findLevelDb() {
 }
 
 function isOpenWhisprRunning() {
-  const r = spawnSync("pgrep", ["-x", "OpenWhispr"], { encoding: "utf8" });
+  for (const name of ["OpenWhispr", "open-whispr", "openwhispr"]) {
+    const r = spawnSync("pgrep", ["-x", name], { encoding: "utf8" });
+    if (r.status === 0) return true;
+  }
+  const r = spawnSync("pgrep", ["-f", "/opt/openwhispr/open-whispr"], {
+    encoding: "utf8",
+  });
   return r.status === 0;
 }
 

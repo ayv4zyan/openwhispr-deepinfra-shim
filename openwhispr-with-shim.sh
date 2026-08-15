@@ -8,6 +8,19 @@ set -euo pipefail
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
 
+# Desktop launches often lack nvm/fnm on PATH — prepend known Node installs.
+for _node_bin in \
+  "$HOME/.local/share/nvm"/v*/bin \
+  "$HOME/.nvm/versions/node"/v*/bin \
+  "$HOME/.local/share/fnm/node-versions"/*/installation/bin \
+  "$HOME/.fnm/node-versions"/*/installation/bin; do
+  if [[ -d "$_node_bin" ]]; then
+    PATH="$_node_bin:$PATH"
+  fi
+done
+unset _node_bin
+export PATH
+
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 PORT="${SHIM_PORT:-8765}"
 PID_FILE="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/openwhispr-deepinfra-shim.pid"
@@ -80,6 +93,16 @@ port_in_use() {
   else
     return 1
   fi
+}
+
+openwhispr_running() {
+  # macOS app process name
+  pgrep -x OpenWhispr >/dev/null 2>&1 && return 0
+  # Linux package / Electron binary names
+  pgrep -x open-whispr >/dev/null 2>&1 && return 0
+  pgrep -x openwhispr >/dev/null 2>&1 && return 0
+  pgrep -f '/opt/openwhispr/open-whispr' >/dev/null 2>&1 && return 0
+  return 1
 }
 
 start_shim() {

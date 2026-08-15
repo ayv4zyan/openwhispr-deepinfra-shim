@@ -36,3 +36,7 @@ echo "  $DESKTOP"
 echo
 echo "Launch \"OpenWhispr + DeepInfra\" from your app menu."
 echo "Shim starts with OpenWhispr and stops when it quits."
+echo
+echo "Optional (this machine):"
+echo "  ./install-linux-ydotool.sh     # Wayland auto-paste"
+echo "  ./install-linux-capslock.sh    # Caps Lock → dictate (KDE)"
