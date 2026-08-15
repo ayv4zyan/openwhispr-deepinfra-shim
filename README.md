@@ -142,23 +142,31 @@ systemctl --user enable --now ydotool.service
 
 ### Caps Lock = start/stop dictation (KDE only)
 
-OpenWhispr’s KDE backend **cannot** register `CapsLock` (no Qt key in `kdeShortcut.js`). The binding is a Plasma shortcut that invokes OpenWhispr’s existing `dictation` action.
+OpenWhispr’s KDE backend **cannot** register `CapsLock` (no Qt key in `kdeShortcut.js`). The launcher installs a Plasma helper and **binds Caps Lock only while OpenWhispr is running**:
 
-```bash
-./install-linux-capslock.sh
+```
+Open "OpenWhispr + DeepInfra"
+  → shim starts
+  → Caps Lock → dictate
+  → OpenWhispr opens
+Quit OpenWhispr
+  → Caps Lock released
+  → shim stops
 ```
 
-That writes:
+```bash
+./install-linux-capslock.sh   # once: install helper, leave Caps Lock free
+```
 
 | Path | Role |
 | --- | --- |
-| `scripts/toggle-openwhispr-dictation.sh` | `qdbus6` → `/component/openwhispr` `invokeShortcut dictation` |
-| `~/.local/share/applications/openwhispr-caps-dictate.desktop` | Hidden app, `X-KDE-Shortcuts=Caps Lock` |
-| `~/.config/kglobalshortcutsrc` `[services][openwhispr-caps-dictate.desktop]` | `_launch=Caps Lock,…` |
+| `scripts/kde-caps-dictate.sh` | `on` / `off` — live KGlobalAccel grab |
+| `scripts/toggle-openwhispr-dictation.sh` | `qdbus6` → OpenWhispr `dictation` action |
+| `~/.local/share/applications/openwhispr-caps-dictate.desktop` | Hidden helper app |
 
-Tap **Caps Lock** to start dictation, tap again to stop. OpenWhispr must be running. The Caps Lock LED / case-lock may still toggle — that is the OS lock, not the shortcut.
+Tap **Caps Lock** to start dictation, tap again to stop. Stock OpenWhispr does **not** bind Caps Lock or start the shim.
 
-OpenWhispr **Settings** may still show `Ctrl+Super` (or similar). Leave it. Caps Lock is the extra KDE binding; if you set Caps Lock inside the app, KDE registration fails and it falls back to F8.
+The Caps Lock LED / case-lock may still toggle while the session is open. OpenWhispr **Settings** may still show `Ctrl+Super` — leave it.
 
 ---
 
@@ -171,7 +179,8 @@ OpenWhispr **Settings** may still show `Ctrl+Super` (or similar). Leave it. Caps
 | `setup-macos.sh` | **New machine** one-shot |
 | `install-macos.sh` / `install-linux.sh` | Launcher only |
 | `install-linux-ydotool.sh` | Wayland paste: ydotool + `input` group + user service |
-| `install-linux-capslock.sh` | KDE: Caps Lock → dictate |
+| `install-linux-capslock.sh` | KDE helper only (Caps Lock stays free until launch) |
+| `scripts/kde-caps-dictate.sh` | Bind/release Caps Lock with the OpenWhispr session |
 | `scripts/toggle-openwhispr-dictation.sh` | Invokes OpenWhispr’s KDE `dictation` action |
 | `apply-openwhispr-settings.sh` | Write OpenWhispr settings from JSON |
 | `openwhispr-settings.json` | Settings recipe (in git) |

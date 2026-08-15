@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Bind Caps Lock → OpenWhispr dictate on KDE Plasma 6 (Wayland).
+# Install the Caps Lock → dictate helper for KDE Plasma 6 (Wayland).
 #
-# OpenWhispr's KDE backend cannot register CapsLock (missing Qt key). This
-# installs a hidden .desktop + kglobalaccel shortcut that invokes the same
-# "dictation" action OpenWhispr already registered.
+# Does not grab Caps Lock permanently. openwhispr-with-shim.sh binds Caps Lock
+# when OpenWhispr starts and releases it when OpenWhispr quits.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -37,24 +36,16 @@ X-KDE-Shortcuts=Caps Lock
 EOF
 chmod 644 "$DESKTOP"
 
-if command -v kwriteconfig6 >/dev/null 2>&1; then
-  kwriteconfig6 --file kglobalshortcutsrc \
-    --group services --group openwhispr-caps-dictate.desktop \
-    --key _launch "Caps Lock,none,OpenWhispr Dictate"
-fi
+chmod 755 "$ROOT/scripts/kde-caps-dictate.sh"
+# Leave Caps Lock free until OpenWhispr + DeepInfra starts.
+"$ROOT/scripts/kde-caps-dictate.sh" off || true
+
 if command -v kbuildsycoca6 >/dev/null 2>&1; then
   kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
 fi
-if command -v qdbus6 >/dev/null 2>&1; then
-  qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure >/dev/null 2>&1 || true
-fi
 
-echo "Installed Caps Lock → dictate:"
+echo "Installed Caps Lock helper (inactive until OpenWhispr + DeepInfra runs):"
 echo "  $DESKTOP"
 echo "  $TOGGLE"
 echo
-echo "OpenWhispr must be running. Tap Caps Lock to start/stop dictation."
-echo "The Caps Lock LED / case-lock may still toggle; that is the key's OS lock."
-echo
-echo "If Caps Lock does nothing: confirm OpenWhispr is open, then:"
-echo "  $TOGGLE"
+echo "Day-to-day: open OpenWhispr + DeepInfra. Caps Lock binds on start, releases on quit."

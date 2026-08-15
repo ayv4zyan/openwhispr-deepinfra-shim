@@ -29,6 +29,7 @@ LOG_FILE="$LOG_DIR/shim.log"
 LAUNCH_LOG="$LOG_DIR/launcher.log"
 SHIM_JS="$ROOT/deepinfra-voxtral-shim.js"
 OWNED_SHIM=0
+CAPS_OWNED=0
 
 mkdir -p "$LOG_DIR"
 
@@ -105,10 +106,29 @@ openwhispr_running() {
   return 1
 }
 
+shim_listener_pids() {
+  local pids=""
+  if command -v lsof >/dev/null 2>&1; then
+    pids="$(lsof -t -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  fi
+  echo "$pids"
+}
+
+is_our_shim_pid() {
+  local pid="$1"
+  local cmd=""
+  [[ -r "/proc/$pid/cmdline" ]] || return 1
+  cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline")"
+  [[ "$cmd" == *deepinfra-voxtral-shim.js* ]]
+}
+
 start_shim() {
-  if port_in_use; then
-    log "Shim already listening on :$PORT — reusing it (will not stop it on exit)."
-    OWNED_SHIM=0
+  local existing
+  existing="$(shim_listener_pids)"
+  if [[ -n "$existing" ]]; then
+    log "Shim already listening on :$PORT (pid $existing) — taking it for this session."
+    echo "$existing" >"$PID_FILE"
+    OWNED_SHIM=1
     return
   fi
 
@@ -132,24 +152,50 @@ start_shim() {
 }
 
 stop_shim() {
-  if [[ "$OWNED_SHIM" != "1" ]]; then
-    return
-  fi
   local pid=""
   if [[ -f "$PID_FILE" ]]; then
     pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   fi
-  if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
-    log "Stopping shim (pid $pid)..."
-    kill "$pid" 2>/dev/null || true
-    for _ in $(seq 1 30); do
-      kill -0 "$pid" 2>/dev/null || break
-      sleep 0.1
-    done
-    kill -9 "$pid" 2>/dev/null || true
+  if [[ -z "${pid:-}" ]]; then
+    pid="$(shim_listener_pids)"
   fi
+
+  local p
+  for p in $pid; do
+    if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null && is_our_shim_pid "$p"; then
+      log "Stopping shim (pid $p)..."
+      kill "$p" 2>/dev/null || true
+      for _ in $(seq 1 30); do
+        kill -0 "$p" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -9 "$p" 2>/dev/null || true
+    fi
+  done
   rm -f "$PID_FILE"
   OWNED_SHIM=0
+}
+
+enable_caps_dictate() {
+  [[ "$(uname -s)" == "Linux" ]] || return 0
+  local helper="$ROOT/scripts/kde-caps-dictate.sh"
+  [[ -x "$helper" ]] || return 0
+  if "$helper" on; then
+    CAPS_OWNED=1
+    log "Caps Lock bound to OpenWhispr dictate."
+  else
+    log "Could not bind Caps Lock (non-fatal)."
+  fi
+}
+
+disable_caps_dictate() {
+  [[ "$CAPS_OWNED" == "1" ]] || return 0
+  local helper="$ROOT/scripts/kde-caps-dictate.sh"
+  if [[ -x "$helper" ]]; then
+    "$helper" off || true
+    log "Caps Lock released."
+  fi
+  CAPS_OWNED=0
 }
 
 launch_openwhispr() {
@@ -181,6 +227,7 @@ launch_openwhispr() {
 }
 
 cleanup() {
+  disable_caps_dictate
   stop_shim
   log "Done."
 }
@@ -194,12 +241,14 @@ require_files
 if openwhispr_running; then
   log "OpenWhispr already running — ensuring shim is up and waiting for quit..."
   start_shim
+  enable_caps_dictate
   while openwhispr_running; do sleep 1; done
   log "OpenWhispr closed."
   exit 0
 fi
 
 start_shim
-log "Launching OpenWhispr (shim stays up until it quits)..."
+enable_caps_dictate
+log "Launching OpenWhispr (shim + Caps Lock stay up until it quits)..."
 launch_openwhispr
 log "OpenWhispr closed."
